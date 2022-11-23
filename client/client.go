@@ -344,6 +344,10 @@ func (o *ovsdbClient) tryEndpoint(ctx context.Context, u *url.URL) (string, erro
 		return "", fmt.Errorf("failed to open connection: %w", err)
 	}
 
+	if err = setTCPUserTimeout(c, 20*time.Second); err != nil {
+		return "", fmt.Errorf("failed to set TCP_USER_TIMEOUT: %v", err)
+	}
+
 	o.createRPC2Client(c)
 
 	serverDBNames, err := o.listDbs(ctx)
@@ -840,8 +844,9 @@ func (o *ovsdbClient) Monitor(ctx context.Context, monitor *Monitor) (MonitorCoo
 	return cookie, o.monitor(ctx, cookie, false, monitor)
 }
 
-//gocyclo:ignore
 // monitor must only be called with a lock on monitorsMutex
+//
+//gocyclo:ignore
 func (o *ovsdbClient) monitor(ctx context.Context, cookie MonitorCookie, reconnecting bool, monitor *Monitor) error {
 	// if we're reconnecting, we already hold the rpcMutex
 	if !reconnecting {
@@ -1294,7 +1299,7 @@ func hasMonitors(db *database) bool {
 // We add this wrapper to allow users to access the API directly on the
 // client object
 
-//Get implements the API interface's Get function
+// Get implements the API interface's Get function
 func (o *ovsdbClient) Get(ctx context.Context, model model.Model) error {
 	primaryDB := o.primaryDB()
 	waitForCacheConsistent(ctx, primaryDB, o.logger, o.primaryDBName)
@@ -1302,12 +1307,12 @@ func (o *ovsdbClient) Get(ctx context.Context, model model.Model) error {
 	return primaryDB.api.Get(ctx, model)
 }
 
-//Create implements the API interface's Create function
+// Create implements the API interface's Create function
 func (o *ovsdbClient) Create(models ...model.Model) ([]ovsdb.Operation, error) {
 	return o.primaryDB().api.Create(models...)
 }
 
-//List implements the API interface's List function
+// List implements the API interface's List function
 func (o *ovsdbClient) List(ctx context.Context, result interface{}) error {
 	primaryDB := o.primaryDB()
 	waitForCacheConsistent(ctx, primaryDB, o.logger, o.primaryDBName)
@@ -1325,12 +1330,12 @@ func (o *ovsdbClient) WhereAny(m model.Model, conditions ...model.Condition) Con
 	return o.primaryDB().api.WhereAny(m, conditions...)
 }
 
-//WhereAll implements the API interface's WhereAll function
+// WhereAll implements the API interface's WhereAll function
 func (o *ovsdbClient) WhereAll(m model.Model, conditions ...model.Condition) ConditionalAPI {
 	return o.primaryDB().api.WhereAll(m, conditions...)
 }
 
-//WhereCache implements the API interface's WhereCache function
+// WhereCache implements the API interface's WhereCache function
 func (o *ovsdbClient) WhereCache(predicate interface{}) ConditionalAPI {
 	return o.primaryDB().api.WhereCache(predicate)
 }
