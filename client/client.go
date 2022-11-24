@@ -1342,6 +1342,14 @@ func (o *ovsdbClient) WhereAll(m model.Model, conditions ...model.Condition) Con
 	return o.primaryDB().api.WhereAll(m, conditions...)
 }
 
+// WherePredict implements the API interface's WherePredict function
+func (o *ovsdbClient) WherePredict(ctx context.Context, predicate interface{}) ConditionalAPI {
+	primaryDB := o.primaryDB()
+	waitForCacheConsistent(ctx, primaryDB, o.logger, o.primaryDBName)
+	defer primaryDB.cacheMutex.RUnlock()
+	return primaryDB.api.WherePredict(ctx, predicate)
+}
+
 // WhereCache implements the API interface's WhereCache function
 func (o *ovsdbClient) WhereCache(predicate interface{}) ConditionalAPI {
 	return o.primaryDB().api.WhereCache(predicate)
