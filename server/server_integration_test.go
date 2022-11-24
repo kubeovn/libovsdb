@@ -11,10 +11,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ovn-org/libovsdb/cache"
-	"github.com/ovn-org/libovsdb/client"
-	"github.com/ovn-org/libovsdb/model"
-	"github.com/ovn-org/libovsdb/ovsdb"
+	"github.com/kubeovn/libovsdb/cache"
+	"github.com/kubeovn/libovsdb/client"
+	"github.com/kubeovn/libovsdb/model"
+	"github.com/kubeovn/libovsdb/ovsdb"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

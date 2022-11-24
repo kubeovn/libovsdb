@@ -7,9 +7,9 @@ import (
 	"reflect"
 
 	"github.com/go-logr/logr"
-	"github.com/ovn-org/libovsdb/cache"
-	"github.com/ovn-org/libovsdb/model"
-	"github.com/ovn-org/libovsdb/ovsdb"
+	"github.com/kubeovn/libovsdb/cache"
+	"github.com/kubeovn/libovsdb/model"
+	"github.com/kubeovn/libovsdb/ovsdb"
 )
 
 // API defines basic operations to interact with the database

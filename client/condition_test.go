@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/ovn-org/libovsdb/cache"
-	"github.com/ovn-org/libovsdb/model"
-	"github.com/ovn-org/libovsdb/ovsdb"
+	"github.com/kubeovn/libovsdb/cache"
+	"github.com/kubeovn/libovsdb/model"
+	"github.com/kubeovn/libovsdb/ovsdb"
 	"github.com/stretchr/testify/assert"
 )
 

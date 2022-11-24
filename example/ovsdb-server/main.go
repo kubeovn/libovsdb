@@ -12,11 +12,11 @@ import (
 	"runtime/pprof"
 	"time"
 
-	"github.com/ovn-org/libovsdb/client"
-	"github.com/ovn-org/libovsdb/example/vswitchd"
-	"github.com/ovn-org/libovsdb/model"
-	"github.com/ovn-org/libovsdb/ovsdb"
-	"github.com/ovn-org/libovsdb/server"
+	"github.com/kubeovn/libovsdb/client"
+	"github.com/kubeovn/libovsdb/example/vswitchd"
+	"github.com/kubeovn/libovsdb/model"
+	"github.com/kubeovn/libovsdb/ovsdb"
+	"github.com/kubeovn/libovsdb/server"
 )
 
 var (

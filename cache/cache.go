@@ -16,9 +16,9 @@ import (
 
 	"github.com/go-logr/logr"
 	"github.com/go-logr/stdr"
-	"github.com/ovn-org/libovsdb/mapper"
-	"github.com/ovn-org/libovsdb/model"
-	"github.com/ovn-org/libovsdb/ovsdb"
+	"github.com/kubeovn/libovsdb/mapper"
+	"github.com/kubeovn/libovsdb/model"
+	"github.com/kubeovn/libovsdb/ovsdb"
 )
 
 const (

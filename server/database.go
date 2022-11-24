@@ -5,9 +5,9 @@ import (
 	"sync"
 
 	"github.com/google/uuid"
-	"github.com/ovn-org/libovsdb/cache"
-	"github.com/ovn-org/libovsdb/model"
-	"github.com/ovn-org/libovsdb/ovsdb"
+	"github.com/kubeovn/libovsdb/cache"
+	"github.com/kubeovn/libovsdb/model"
+	"github.com/kubeovn/libovsdb/ovsdb"
 )
 
 // Database abstracts database operations from ovsdb

@@ -8,9 +8,9 @@ import (
 	"text/template"
 
 	"github.com/google/uuid"
-	"github.com/ovn-org/libovsdb/example/vswitchd"
-	"github.com/ovn-org/libovsdb/model"
-	"github.com/ovn-org/libovsdb/ovsdb"
+	"github.com/kubeovn/libovsdb/example/vswitchd"
+	"github.com/kubeovn/libovsdb/model"
+	"github.com/kubeovn/libovsdb/ovsdb"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -163,7 +163,7 @@ type AtomicTable struct {
 
 package test
 
-import "github.com/ovn-org/libovsdb/model"
+import "github.com/kubeovn/libovsdb/model"
 
 const AtomicTableTable = "atomicTable"
 
@@ -295,7 +295,7 @@ func (a *AtomicTable) PrintAtomicTableOtherProtocol() bool {
 
 package test
 
-import "github.com/ovn-org/libovsdb/model"
+import "github.com/kubeovn/libovsdb/model"
 
 import "fmt"
 
@@ -421,7 +421,7 @@ var _ model.ComparableModel = &AtomicTable{}
 
 package test
 
-import "github.com/ovn-org/libovsdb/model"
+import "github.com/kubeovn/libovsdb/model"
 
 const AtomicTableTable = "atomicTable"
 
