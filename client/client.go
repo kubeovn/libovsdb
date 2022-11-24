@@ -1265,15 +1265,15 @@ func isCacheConsistent(db *database) bool {
 
 // best effort to ensure cache is in a good state for reading. RLocks the
 // database's cache before returning; caller must always unlock.
-func waitForCacheConsistent(ctx context.Context, db *database, logger *logr.Logger, dbName string) {
+func waitForCacheConsistent(ctx context.Context, db *database, logger *logr.Logger, dbName string) error {
 	if !hasMonitors(db) {
 		db.cacheMutex.RLock()
-		return
+		return nil
 	}
 	// Check immediately as a fastpath
 	db.cacheMutex.RLock()
 	if isCacheConsistent(db) {
-		return
+		return nil
 	}
 	db.cacheMutex.RUnlock()
 
@@ -1285,11 +1285,11 @@ func waitForCacheConsistent(ctx context.Context, db *database, logger *logr.Logg
 			logger.V(3).Info("warning: unable to ensure cache consistency for reading",
 				"database", dbName)
 			db.cacheMutex.RLock()
-			return
+			return fmt.Errorf("timed out waiting for cache consistent")
 		case <-ticker.C:
 			db.cacheMutex.RLock()
 			if isCacheConsistent(db) {
-				return
+				return nil
 			}
 			db.cacheMutex.RUnlock()
 		}
@@ -1309,8 +1309,11 @@ func hasMonitors(db *database) bool {
 // Get implements the API interface's Get function
 func (o *ovsdbClient) Get(ctx context.Context, model model.Model) error {
 	primaryDB := o.primaryDB()
-	waitForCacheConsistent(ctx, primaryDB, o.logger, o.primaryDBName)
+	err := waitForCacheConsistent(ctx, primaryDB, o.logger, o.primaryDBName)
 	defer primaryDB.cacheMutex.RUnlock()
+	if err != nil {
+		return err
+	}
 	return primaryDB.api.Get(ctx, model)
 }
 
@@ -1322,8 +1325,11 @@ func (o *ovsdbClient) Create(models ...model.Model) ([]ovsdb.Operation, error) {
 // List implements the API interface's List function
 func (o *ovsdbClient) List(ctx context.Context, result interface{}) error {
 	primaryDB := o.primaryDB()
-	waitForCacheConsistent(ctx, primaryDB, o.logger, o.primaryDBName)
+	err := waitForCacheConsistent(ctx, primaryDB, o.logger, o.primaryDBName)
 	defer primaryDB.cacheMutex.RUnlock()
+	if err != nil {
+		return err
+	}
 	return primaryDB.api.List(ctx, result)
 }
 
@@ -1343,10 +1349,13 @@ func (o *ovsdbClient) WhereAll(m model.Model, conditions ...model.Condition) Con
 }
 
 // WherePredict implements the API interface's WherePredict function
-func (o *ovsdbClient) WherePredict(ctx context.Context, predicate interface{}) ConditionalAPI {
+func (o *ovsdbClient) WherePredict(ctx context.Context, predicate interface{}) (ConditionalAPI, error) {
 	primaryDB := o.primaryDB()
-	waitForCacheConsistent(ctx, primaryDB, o.logger, o.primaryDBName)
+	err := waitForCacheConsistent(ctx, primaryDB, o.logger, o.primaryDBName)
 	defer primaryDB.cacheMutex.RUnlock()
+	if err != nil {
+		return nil, err
+	}
 	return primaryDB.api.WherePredict(ctx, predicate)
 }
 

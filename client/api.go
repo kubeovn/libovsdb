@@ -24,7 +24,7 @@ type API interface {
 	// Create a Conditional API from a Function that is used to filter data
 	// The function must accept a Model implementation and return a boolean. E.g:
 	// ConditionFromFunc(func(l *LogicalSwitch) bool { return l.Enabled })
-	WherePredict(ctx context.Context, predicate interface{}) ConditionalAPI
+	WherePredict(ctx context.Context, predicate interface{}) (ConditionalAPI, error)
 
 	// Create a Conditional API from a Function that is used to filter cached data
 	// The function must accept a Model implementation and return a boolean. E.g:
@@ -199,8 +199,8 @@ func (a api) WhereAll(m model.Model, cond ...model.Condition) ConditionalAPI {
 }
 
 // WherePredict returns a conditionalAPI based a Predicate
-func (a api) WherePredict(ctx context.Context, predicate interface{}) ConditionalAPI {
-	return newConditionalAPI(a.cache, a.conditionFromFunc(predicate), a.logger)
+func (a api) WherePredict(ctx context.Context, predicate interface{}) (ConditionalAPI, error) {
+	return newConditionalAPI(a.cache, a.conditionFromFunc(predicate), a.logger), nil
 }
 
 // WhereCache returns a conditionalAPI based a Predicate
