@@ -16,8 +16,6 @@ import (
 	"time"
 
 	"github.com/cenkalti/backoff/v4"
-	"github.com/cenkalti/rpc2"
-	"github.com/cenkalti/rpc2/jsonrpc"
 	"github.com/go-logr/logr"
 	"github.com/go-logr/stdr"
 	"github.com/ovn-org/libovsdb/cache"
@@ -25,6 +23,8 @@ import (
 	"github.com/ovn-org/libovsdb/model"
 	"github.com/ovn-org/libovsdb/ovsdb"
 	"github.com/ovn-org/libovsdb/ovsdb/serverdb"
+	"github.com/zhangzujian/rpc2"
+	"github.com/zhangzujian/rpc2/jsonrpc"
 )
 
 // Constants defined for libovsdb
@@ -429,7 +429,7 @@ func (o *ovsdbClient) tryEndpoint(ctx context.Context, u *url.URL) (string, erro
 // Should only be called when the mutex is held
 func (o *ovsdbClient) createRPC2Client(conn net.Conn) {
 	o.stopCh = make(chan struct{})
-	o.rpcClient = rpc2.NewClientWithCodec(jsonrpc.NewJSONCodec(conn))
+	o.rpcClient = rpc2.NewClientWithCodec(jsonrpc.NewJSONCodec(conn, o.options.timeout))
 	o.rpcClient.SetBlocking(true)
 	o.rpcClient.Handle("echo", func(_ *rpc2.Client, args []interface{}, reply *[]interface{}) error {
 		return o.echo(args, reply)
@@ -1308,6 +1308,10 @@ func hasMonitors(db *database) bool {
 
 // Get implements the API interface's Get function
 func (o *ovsdbClient) Get(ctx context.Context, model model.Model) error {
+	if err := o.Echo(ctx); err != nil {
+		return err
+	}
+
 	primaryDB := o.primaryDB()
 	err := waitForCacheConsistent(ctx, primaryDB, o.logger, o.primaryDBName)
 	defer primaryDB.cacheMutex.RUnlock()
@@ -1324,6 +1328,10 @@ func (o *ovsdbClient) Create(models ...model.Model) ([]ovsdb.Operation, error) {
 
 // List implements the API interface's List function
 func (o *ovsdbClient) List(ctx context.Context, result interface{}) error {
+	if err := o.Echo(ctx); err != nil {
+		return err
+	}
+
 	primaryDB := o.primaryDB()
 	err := waitForCacheConsistent(ctx, primaryDB, o.logger, o.primaryDBName)
 	defer primaryDB.cacheMutex.RUnlock()
@@ -1346,17 +1354,6 @@ func (o *ovsdbClient) WhereAny(m model.Model, conditions ...model.Condition) Con
 // WhereAll implements the API interface's WhereAll function
 func (o *ovsdbClient) WhereAll(m model.Model, conditions ...model.Condition) ConditionalAPI {
 	return o.primaryDB().api.WhereAll(m, conditions...)
-}
-
-// WherePredict implements the API interface's WherePredict function
-func (o *ovsdbClient) WherePredict(ctx context.Context, predicate interface{}) (ConditionalAPI, error) {
-	primaryDB := o.primaryDB()
-	err := waitForCacheConsistent(ctx, primaryDB, o.logger, o.primaryDBName)
-	defer primaryDB.cacheMutex.RUnlock()
-	if err != nil {
-		return nil, err
-	}
-	return primaryDB.api.WherePredict(ctx, predicate)
 }
 
 // WhereCache implements the API interface's WhereCache function

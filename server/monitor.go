@@ -5,9 +5,9 @@ import (
 	"log"
 	"sync"
 
-	"github.com/cenkalti/rpc2"
 	"github.com/google/uuid"
 	"github.com/ovn-org/libovsdb/ovsdb"
+	"github.com/zhangzujian/rpc2"
 )
 
 // connectionMonitors maps a connection to a map or monitors

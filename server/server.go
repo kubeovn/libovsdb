@@ -9,14 +9,14 @@ import (
 	"os"
 	"sync"
 
-	"github.com/cenkalti/rpc2"
-	"github.com/cenkalti/rpc2/jsonrpc"
 	"github.com/go-logr/logr"
 	"github.com/go-logr/stdr"
 	"github.com/google/uuid"
 	"github.com/ovn-org/libovsdb/cache"
 	"github.com/ovn-org/libovsdb/model"
 	"github.com/ovn-org/libovsdb/ovsdb"
+	"github.com/zhangzujian/rpc2"
+	"github.com/zhangzujian/rpc2/jsonrpc"
 )
 
 // OvsdbServer is an ovsdb server
@@ -98,7 +98,7 @@ func (o *OvsdbServer) Serve(protocol string, path string) error {
 		}
 
 		// TODO: Need to cleanup when connection is closed
-		go o.srv.ServeCodec(jsonrpc.NewJSONCodec(conn))
+		go o.srv.ServeCodec(jsonrpc.NewJSONCodec(conn, 0))
 	}
 }
 

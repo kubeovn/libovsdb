@@ -13,15 +13,15 @@ import (
 	"time"
 
 	"github.com/cenkalti/backoff/v4"
-	"github.com/cenkalti/rpc2"
 	"github.com/google/uuid"
+	"github.com/kubeovn/libovsdb/server"
 	"github.com/ovn-org/libovsdb/cache"
 	"github.com/ovn-org/libovsdb/model"
 	"github.com/ovn-org/libovsdb/ovsdb"
 	"github.com/ovn-org/libovsdb/ovsdb/serverdb"
-	"github.com/ovn-org/libovsdb/server"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/zhangzujian/rpc2"
 )
 
 var (

@@ -21,11 +21,6 @@ type API interface {
 	// If it has a capacity != 0, only 'capacity' elements will be filled in
 	List(ctx context.Context, result interface{}) error
 
-	// Create a Conditional API from a Function that is used to filter data
-	// The function must accept a Model implementation and return a boolean. E.g:
-	// ConditionFromFunc(func(l *LogicalSwitch) bool { return l.Enabled })
-	WherePredict(ctx context.Context, predicate interface{}) (ConditionalAPI, error)
-
 	// Create a Conditional API from a Function that is used to filter cached data
 	// The function must accept a Model implementation and return a boolean. E.g:
 	// ConditionFromFunc(func(l *LogicalSwitch) bool { return l.Enabled })

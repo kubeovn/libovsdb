@@ -4,7 +4,6 @@ go 1.18
 
 require (
 	github.com/cenkalti/backoff/v4 v4.1.3
-	github.com/cenkalti/rpc2 v0.0.0-20210604223624-c1acbc6ec984
 	github.com/go-logr/logr v1.2.2
 	github.com/go-logr/stdr v1.2.2
 	github.com/google/uuid v1.2.0
@@ -12,6 +11,7 @@ require (
 	github.com/ovn-org/libovsdb v0.0.0-20221101143603-8f21d188c3a5
 	github.com/prometheus/client_golang v1.12.1
 	github.com/stretchr/testify v1.8.0
+	github.com/zhangzujian/rpc2 v0.0.0-20221124104236-7fbaecc52177
 	golang.org/x/sys v0.0.0-20220811171246-fbc7d0a398ab
 	golang.org/x/text v0.3.6
 )
@@ -22,6 +22,7 @@ require (
 	github.com/Nvveen/Gotty v0.0.0-20120604004816-cd527374f1e5 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/cenkalti/hub v1.0.1 // indirect
+	github.com/cenkalti/rpc2 v0.0.0-20210604223624-c1acbc6ec984 // indirect
 	github.com/cespare/xxhash/v2 v2.1.2 // indirect
 	github.com/containerd/continuity v0.3.0 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
