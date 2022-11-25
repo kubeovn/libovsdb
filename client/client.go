@@ -265,7 +265,9 @@ func (o *ovsdbClient) connect(ctx context.Context, reconnect bool) error {
 		} else {
 			o.logger.V(3).Info("successfully connected", "endpoint", endpoint.address, "sid", sid)
 			endpoint.serverID = sid
-			o.moveEndpointFirst(i)
+			if i != 0 {
+				o.moveEndpointFirst(i)
+			}
 			connected = true
 			break
 		}
@@ -1160,12 +1162,12 @@ func (o *ovsdbClient) handleDisconnectNotification() {
 			}
 			err := o.connect(context.Background(), true)
 			if err != nil {
-				if suppressionCounter < 5 {
-					o.logger.V(2).Error(err, "failed to reconnect")
-				} else if suppressionCounter == 5 {
-					o.logger.V(2).Error(err, "reconnect has failed 5 times, suppressing logging "+
-						"for future attempts")
-				}
+				// if suppressionCounter < 5 {
+				o.logger.V(2).Error(err, "failed to reconnect")
+				// } else if suppressionCounter == 5 {
+				// 	o.logger.V(2).Error(err, "reconnect has failed 5 times, suppressing logging "+
+				// 		"for future attempts")
+				// }
 			}
 			suppressionCounter++
 			return err
