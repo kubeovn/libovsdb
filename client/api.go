@@ -21,6 +21,8 @@ type API interface {
 	// If it has a capacity != 0, only 'capacity' elements will be filled in
 	List(ctx context.Context, result interface{}) error
 
+	WherePredict(ctx context.Context, predicate interface{}) (ConditionalAPI, error)
+
 	// Create a Conditional API from a Function that is used to filter cached data
 	// The function must accept a Model implementation and return a boolean. E.g:
 	// ConditionFromFunc(func(l *LogicalSwitch) bool { return l.Enabled })
@@ -191,6 +193,11 @@ func (a api) WhereAny(m model.Model, cond ...model.Condition) ConditionalAPI {
 // of the conditions together
 func (a api) WhereAll(m model.Model, cond ...model.Condition) ConditionalAPI {
 	return newConditionalAPI(a.cache, a.conditionFromExplicitConditions(true, m, cond...), a.logger)
+}
+
+// WherePredict returns a conditionalAPI based a Predicate
+func (a api) WherePredict(ctx context.Context, predicate interface{}) (ConditionalAPI, error) {
+	return newConditionalAPI(a.cache, a.conditionFromFunc(predicate), a.logger), nil
 }
 
 // WhereCache returns a conditionalAPI based a Predicate
