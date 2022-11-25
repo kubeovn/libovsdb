@@ -1093,7 +1093,7 @@ func (o *ovsdbClient) watchForLeaderChange() error {
 					o.logger.V(3).Info("endpoint lost leader, reconnecting",
 						"endpoint", activeEndpoint.address, "sid", sid)
 					// don't immediately reconnect to the active endpoint since it's no longer leader
-					o.moveEndpointLast(0)
+					// o.moveEndpointLast(0)
 					o._disconnect()
 				} else {
 					o.logger.V(3).Info("endpoint lost leader but had unexpected server ID",
@@ -1153,13 +1153,16 @@ func (o *ovsdbClient) handleDisconnectNotification() {
 		o.rpcMutex.Unlock()
 		suppressionCounter := 1
 		connect := func() error {
+			o.logger.V(3).Info(fmt.Sprintf("retry - %04d", suppressionCounter))
 			// need to ensure deferredUpdates is cleared on every reconnect attempt
-			for _, db := range o.databases {
+			for s, db := range o.databases {
+				o.logger.V(3).Info(s)
 				db.cacheMutex.Lock()
 				db.deferredUpdates = make([]*bufferedUpdate, 0)
 				db.deferUpdates = true
 				db.cacheMutex.Unlock()
 			}
+			o.logger.V(3).Info("databases done")
 			err := o.connect(context.Background(), true)
 			if err != nil {
 				// if suppressionCounter < 5 {
