@@ -1158,9 +1158,11 @@ func (o *ovsdbClient) handleDisconnectNotification() {
 			for s, db := range o.databases {
 				o.logger.V(3).Info(s)
 				db.cacheMutex.Lock()
+				o.logger.V(3).Info(fmt.Sprintf("database %s lock acquired", s))
 				db.deferredUpdates = make([]*bufferedUpdate, 0)
 				db.deferUpdates = true
 				db.cacheMutex.Unlock()
+				o.logger.V(3).Info(fmt.Sprintf("database %s lock released", s))
 			}
 			o.logger.V(3).Info("databases done")
 			err := o.connect(context.Background(), true)
@@ -1276,10 +1278,10 @@ func (o *ovsdbClient) waitForCacheConsistent(ctx context.Context, db *database, 
 		return nil
 	}
 
-	if err := o.Echo(ctx); err != nil {
-		db.cacheMutex.RLock()
-		return err
-	}
+	// if err := o.Echo(ctx); err != nil {
+	// 	db.cacheMutex.RLock()
+	// 	return err
+	// }
 
 	// Check immediately as a fastpath
 	db.cacheMutex.RLock()
