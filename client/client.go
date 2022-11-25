@@ -1356,10 +1356,11 @@ func hasMonitors(db *database) bool {
 // Get implements the API interface's Get function
 func (o *ovsdbClient) Get(ctx context.Context, model model.Model) error {
 	primaryDB := o.primaryDB()
-	if err := o.waitForCacheConsistent(ctx, primaryDB, o.logger, o.primaryDBName); err != nil {
+	err := o.waitForCacheConsistent(ctx, primaryDB, o.logger, o.primaryDBName)
+	defer primaryDB.cacheMutex.RUnlock()
+	if err != nil {
 		return err
 	}
-	defer primaryDB.cacheMutex.RUnlock()
 	return primaryDB.api.Get(ctx, model)
 }
 
@@ -1371,10 +1372,11 @@ func (o *ovsdbClient) Create(models ...model.Model) ([]ovsdb.Operation, error) {
 // List implements the API interface's List function
 func (o *ovsdbClient) List(ctx context.Context, result interface{}) error {
 	primaryDB := o.primaryDB()
-	if err := o.waitForCacheConsistent(ctx, primaryDB, o.logger, o.primaryDBName); err != nil {
+	err := o.waitForCacheConsistent(ctx, primaryDB, o.logger, o.primaryDBName)
+	defer primaryDB.cacheMutex.RUnlock()
+	if err != nil {
 		return err
 	}
-	defer primaryDB.cacheMutex.RUnlock()
 	return primaryDB.api.List(ctx, result)
 }
 
@@ -1396,10 +1398,11 @@ func (o *ovsdbClient) WhereAll(m model.Model, conditions ...model.Condition) Con
 // WherePredict implements the API interface's WherePredict function
 func (o *ovsdbClient) WherePredict(ctx context.Context, predicate interface{}) (ConditionalAPI, error) {
 	primaryDB := o.primaryDB()
-	if err := o.waitForCacheConsistent(ctx, primaryDB, o.logger, o.primaryDBName); err != nil {
+	err := o.waitForCacheConsistent(ctx, primaryDB, o.logger, o.primaryDBName)
+	defer primaryDB.cacheMutex.RUnlock()
+	if err != nil {
 		return nil, err
 	}
-	defer primaryDB.cacheMutex.RUnlock()
 	return o.primaryDB().api.WhereCache(predicate), nil
 }
 
