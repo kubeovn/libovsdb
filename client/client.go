@@ -1023,6 +1023,7 @@ func (o *ovsdbClient) Echo(ctx context.Context) error {
 	o.logger.V(3).Info("rpc mutex acquired")
 	defer o.rpcMutex.RUnlock()
 	if o.rpcClient == nil {
+		o.logger.V(3).Info("error: not connected")
 		return ErrNotConnected
 	}
 	o.logger.V(3).Info("call echo")
@@ -1288,7 +1289,10 @@ func (o *ovsdbClient) waitForCacheConsistent(ctx context.Context, db *database, 
 
 	// }
 	if err := o.Echo(ctx); err != nil {
+		o.logger.V(3).Info(fmt.Sprintf("failed to call echo: %v", err))
+		o.logger.V(3).Info("try to acquire cache mutex")
 		db.cacheMutex.RLock()
+		o.logger.V(3).Info("acquired cache mutex")
 		return err
 	}
 
