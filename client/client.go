@@ -1014,21 +1014,26 @@ func (o *ovsdbClient) monitor(ctx context.Context, cookie MonitorCookie, reconne
 	return err
 }
 
-// Echo tests the liveness of the OVSDB connetion
+// Echo tests the liveness of the OVSDB connection
 func (o *ovsdbClient) Echo(ctx context.Context) error {
 	args := ovsdb.NewEchoArgs()
 	var reply []interface{}
+	o.logger.V(3).Info("try to acquire rpc mutex")
 	o.rpcMutex.RLock()
+	o.logger.V(3).Info("rpc mutex acquired")
 	defer o.rpcMutex.RUnlock()
 	if o.rpcClient == nil {
 		return ErrNotConnected
 	}
+	o.logger.V(3).Info("call echo")
 	err := o.rpcClient.CallWithContext(ctx, "echo", args, &reply)
 	if err != nil {
+		o.logger.V(3).Info(fmt.Sprintf("failed to call echo: %v", err))
 		if err == rpc2.ErrShutdown {
 			return ErrNotConnected
 		}
 	}
+	o.logger.V(3).Info("call echo done")
 	if !reflect.DeepEqual(args, reply) {
 		return fmt.Errorf("incorrect server response: %v, %v", args, reply)
 	}
@@ -1278,9 +1283,34 @@ func (o *ovsdbClient) waitForCacheConsistent(ctx context.Context, db *database, 
 		return nil
 	}
 
-	// if err := o.Echo(ctx); err != nil {
+	// o.rpcMutex.RLock()
+	// if o.rpcClient == nil {
+
+	// }
+	if err := o.Echo(ctx); err != nil {
+		db.cacheMutex.RLock()
+		return err
+	}
+
+	// if !o.rpcMutex.TryLock() {
 	// 	db.cacheMutex.RLock()
-	// 	return err
+	// 	return fmt.Errorf("failed to acquire rpc mutex")
+	// }
+	// defer o.rpcMutex.Unlock()
+
+	// args := ovsdb.NewEchoArgs()
+	// var reply []interface{}
+	// if o.rpcClient == nil {
+	// 	return ErrNotConnected
+	// }
+	// err := o.rpcClient.CallWithContext(ctx, "echo", args, &reply)
+	// if err != nil {
+	// 	if err == rpc2.ErrShutdown {
+	// 		return ErrNotConnected
+	// 	}
+	// }
+	// if !reflect.DeepEqual(args, reply) {
+	// 	return fmt.Errorf("incorrect server response: %v, %v", args, reply)
 	// }
 
 	// Check immediately as a fastpath
