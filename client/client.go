@@ -1215,6 +1215,7 @@ func (o *ovsdbClient) sendEcho(args []interface{}, reply *[]interface{}) *rpc2.C
 	if o.rpcClient == nil {
 		return nil
 	}
+	o.logger.V(3).Info("sending echo")
 	return o.rpcClient.Go("echo", args, reply, make(chan *rpc2.Call, 1))
 }
 
