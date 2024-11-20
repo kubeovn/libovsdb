@@ -255,6 +255,12 @@ func (o *ovsdbClient) connect(ctx context.Context, reconnect bool) error {
 		if err != nil {
 			return err
 		}
+		ctx := context.Background()
+		var cancel context.CancelFunc
+		if o.options.timeout != 0 {
+			ctx, cancel = context.WithTimeout(ctx, o.options.timeout)
+			defer cancel()
+		}
 		if sid, err := o.tryEndpoint(ctx, u); err != nil {
 			o.resetRPCClient()
 			connectErrors = append(connectErrors,
@@ -296,6 +302,8 @@ func (o *ovsdbClient) connect(ctx context.Context, reconnect bool) error {
 			// Restart all monitors; each monitor will handle purging
 			// the cache if necessary
 			for id, request := range db.monitors {
+				ctx, cancel := context.WithTimeout(context.Background(), o.options.timeout)
+				defer cancel()
 				err := o.monitor(ctx, MonitorCookie{DatabaseName: dbName, ID: id}, true, request)
 				if err != nil {
 					o.resetRPCClient()
@@ -1161,8 +1169,6 @@ func (o *ovsdbClient) watchForLeaderChange() error {
 				if sid == activeEndpoint.serverID {
 					o.logger.V(3).Info("endpoint lost leader, reconnecting",
 						"endpoint", activeEndpoint.address, "sid", sid)
-					// don't immediately reconnect to the active endpoint since it's no longer leader
-					o.moveEndpointLast(0)
 					o._disconnect()
 				} else {
 					o.logger.V(3).Info("endpoint lost leader but had unexpected server ID",
@@ -1263,9 +1269,7 @@ func (o *ovsdbClient) handleDisconnectNotification() {
 				db.deferUpdates = true
 				db.cacheMutex.Unlock()
 			}
-			ctx, cancel := context.WithTimeout(context.Background(), o.options.timeout)
-			defer cancel()
-			err := o.connect(ctx, true)
+			err := o.connect(context.Background(), true)
 			if err != nil {
 				if suppressionCounter < 5 {
 					o.logger.V(2).Error(err, "failed to reconnect")
@@ -1278,6 +1282,7 @@ func (o *ovsdbClient) handleDisconnectNotification() {
 			return err
 		}
 		o.logger.V(3).Info("connection lost, reconnecting", "endpoint", o.endpoints[0].address)
+		o.moveEndpointLast(0)
 		err := backoff.Retry(connect, o.options.backoff)
 		if err != nil {
 			// TODO: We should look at passing this back to the
