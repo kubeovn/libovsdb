@@ -353,6 +353,12 @@ func (o *ovsdbClient) tryEndpoint(ctx context.Context, u *url.URL) (string, erro
 		return "", fmt.Errorf("failed to open connection: %w", err)
 	}
 
+	if o.options.timeout != 0 {
+		if err = setTCPUserTimeout(c, o.options.timeout); err != nil {
+			return "", fmt.Errorf("failed to set TCP_USER_TIMEOUT: %v", err)
+		}
+	}
+
 	o.createRPC2Client(c)
 
 	serverDBNames, err := o.listDbs(ctx)
