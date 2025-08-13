@@ -25,6 +25,11 @@ type API interface {
 	// Create a Conditional API from a Function that is used to filter cached data
 	// The function must accept a Model implementation and return a boolean. E.g:
 	// ConditionFromFunc(func(l *LogicalSwitch) bool { return l.Enabled })
+	WherePredict(ctx context.Context, predicate any) (ConditionalAPI, error)
+
+	// Create a Conditional API from a Function that is used to filter cached data
+	// The function must accept a Model implementation and return a boolean. E.g:
+	// ConditionFromFunc(func(l *LogicalSwitch) bool { return l.Enabled })
 	WhereCache(predicate any) ConditionalAPI
 
 	// Create a ConditionalAPI from a Model's index data, where operations
@@ -151,8 +156,10 @@ func (a api) List(_ context.Context, result any) error {
 	}
 
 	if a.cond != nil && a.cond.Table() != table {
-		return &ErrWrongType{resultPtr.Type(),
-			fmt.Sprintf("Table derived from input type (%s) does not match Table from Condition (%s)", table, a.cond.Table())}
+		return &ErrWrongType{
+			resultPtr.Type(),
+			fmt.Sprintf("Table derived from input type (%s) does not match Table from Condition (%s)", table, a.cond.Table()),
+		}
 	}
 
 	tableCache := a.cache.Table(table)
@@ -204,6 +211,11 @@ func (a api) WhereAny(m model.Model, cond ...model.Condition) ConditionalAPI {
 // of the conditions together
 func (a api) WhereAll(m model.Model, cond ...model.Condition) ConditionalAPI {
 	return newConditionalAPI(a.cache, a.conditionFromExplicitConditions(true, m, cond...), a.logger, a.validateModel)
+}
+
+// WherePredict returns a conditionalAPI based a Predicate
+func (a api) WherePredict(ctx context.Context, predicate interface{}) (ConditionalAPI, error) {
+	return newConditionalAPI(a.cache, a.conditionFromFunc(predicate), a.logger, a.validateModel), nil
 }
 
 // WhereCache returns a conditionalAPI based a Predicate
@@ -335,7 +347,6 @@ func (a api) Create(models ...model.Model) ([]ovsdb.Operation, error) {
 				namedUUID = tmpUUID
 			} else if ovsdb.IsValidUUID(tmpUUID) {
 				realUUID = tmpUUID
-
 			}
 		} else {
 			return nil, fmt.Errorf("error accessing _uuid field: %w", err)
@@ -621,14 +632,18 @@ func (a api) getTableFromFunc(predicate any) (string, error) {
 	modelInterface := reflect.TypeOf((*model.Model)(nil)).Elem()
 	modelType := predType.In(0)
 	if !modelType.Implements(modelInterface) {
-		return "", &ErrWrongType{predType,
-			fmt.Sprintf("Type %s does not implement Model interface", modelType.String())}
+		return "", &ErrWrongType{
+			predType,
+			fmt.Sprintf("Type %s does not implement Model interface", modelType.String()),
+		}
 	}
 
 	table := a.cache.DatabaseModel().FindTable(modelType)
 	if table == "" {
-		return "", &ErrWrongType{predType,
-			fmt.Sprintf("Model %s not found in Database Model", modelType.String())}
+		return "", &ErrWrongType{
+			predType,
+			fmt.Sprintf("Model %s not found in Database Model", modelType.String()),
+		}
 	}
 	return table, nil
 }
