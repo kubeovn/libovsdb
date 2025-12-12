@@ -58,9 +58,11 @@ import (
 	"github.com/ovn-kubernetes/libovsdb/ovsdb"
 )
 
+const DatabaseName = "AtomicDB"
+
 // FullDatabaseModel returns the DatabaseModel object to be used in libovsdb
 func FullDatabaseModel() (model.ClientDBModel, error) {
-	return model.NewClientDBModel("AtomicDB", map[string]model.Model{
+	return model.NewClientDBModel(DatabaseName, map[string]model.Model{
 		"atomicTable": &AtomicTable{},
 	})
 }
