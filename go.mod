@@ -62,3 +62,5 @@ require (
 )
 
 replace github.com/ovn-kubernetes/libovsdb => ./
+
+tool github.com/ovn-kubernetes/libovsdb/cmd/modelgen
