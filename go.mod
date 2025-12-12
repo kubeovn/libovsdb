@@ -63,3 +63,5 @@ require (
 	golang.org/x/crypto v0.57.0 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
 )
+
+tool github.com/ovn-kubernetes/libovsdb/cmd/modelgen
