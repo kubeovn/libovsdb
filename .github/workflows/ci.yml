@@ -33,6 +33,9 @@ jobs:
       - name: Test
         run: make test
 
+      - name: Test endpoint network failover
+        run: sudo env "PATH=$PATH" "HOME=$HOME" make test-network-failover
+
       - name: Test
         run: make integration-test
 

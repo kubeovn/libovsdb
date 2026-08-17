@@ -34,6 +34,11 @@ test: prebuild
 	@echo "+ $@"
 	@go test -race -coverprofile=unit.cov -test.short -timeout 30s -v $(if $(TESTS),-run $(TESTS)) ./...
 
+.PHONY: test-network-failover
+test-network-failover:
+	@echo "+ $@"
+	@unshare -n bash -c 'ip link set lo up && LIBOVSDB_TEST_NETWORK_BLACKHOLE=1 go test -race -count=1 -timeout 30s -run "^TestClient(FailsOver|ReconnectTries)" ./client'
+
 .PHONY: integration-test
 integration-test:
 	@echo "+ $@"
