@@ -444,7 +444,8 @@ func TestRowCacheCreateMultiIndex(t *testing.T) {
 			if tt.wantErr {
 				require.Error(t, err)
 				if tt.wantIndexExistsErr {
-					assert.IsType(t, &ErrIndexExists{}, err)
+					var indexExistsErr *ErrIndexExists
+					require.ErrorAs(t, err, &indexExistsErr)
 				}
 			} else {
 				require.NoError(t, err)

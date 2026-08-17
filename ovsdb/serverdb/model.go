@@ -10,11 +10,9 @@ import (
 	"github.com/ovn-kubernetes/libovsdb/ovsdb"
 )
 
-const DatabaseName = "_Server"
-
 // FullDatabaseModel returns the DatabaseModel object to be used in libovsdb
 func FullDatabaseModel() (model.ClientDBModel, error) {
-	return model.NewClientDBModel(DatabaseName, map[string]model.Model{
+	return model.NewClientDBModel("_Server", map[string]model.Model{
 		"Database": &Database{},
 	})
 }

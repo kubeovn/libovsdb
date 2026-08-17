@@ -223,7 +223,7 @@ type (
 {{- end }}
 )
 
-const (
+var (
 {{ range  index . "Enums" }}
 {{- $e := . }}
 {{- range .Sets }}

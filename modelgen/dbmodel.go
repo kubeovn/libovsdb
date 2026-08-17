@@ -42,11 +42,9 @@ package {{ index . "PackageName" }}
 
 {{ template "preDBDefinitions" }}
 
-const DatabaseName = "{{ index . "DatabaseName" }}"
-
 // FullDatabaseModel returns the DatabaseModel object to be used in libovsdb
 func FullDatabaseModel() (model.ClientDBModel, error) {
-	return model.NewClientDBModel(DatabaseName, map[string]model.Model{
+	return model.NewClientDBModel("{{ index . "DatabaseName" }}", map[string]model.Model{
     {{ range index . "Tables" }} "{{ .TableName }}" : &{{ .StructName }}{}, 
     {{ end }}
 	})

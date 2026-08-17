@@ -258,7 +258,8 @@ func TestClientServerInsertDuplicate(t *testing.T) {
 	opErrs, err := ovsdb.CheckOperationResults(reply, ops)
 	require.Nil(t, opErrs)
 	require.Error(t, err)
-	require.IsTypef(t, &ovsdb.ConstraintViolation{}, err, err.Error())
+	var constraintViolation *ovsdb.ConstraintViolation
+	require.ErrorAs(t, err, &constraintViolation)
 }
 
 func TestClientServerInsertAndUpdate(t *testing.T) {

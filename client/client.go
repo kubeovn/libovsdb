@@ -255,12 +255,6 @@ func (o *ovsdbClient) connect(ctx context.Context, reconnect bool) error {
 		if err != nil {
 			return err
 		}
-		ctx := context.Background()
-		var cancel context.CancelFunc
-		if o.options.timeout != 0 {
-			ctx, cancel = context.WithTimeout(ctx, o.options.timeout)
-			defer cancel()
-		}
 		if sid, err := o.tryEndpoint(ctx, u); err != nil {
 			o.resetRPCClient()
 			connectErrors = append(connectErrors,
@@ -302,8 +296,6 @@ func (o *ovsdbClient) connect(ctx context.Context, reconnect bool) error {
 			// Restart all monitors; each monitor will handle purging
 			// the cache if necessary
 			for id, request := range db.monitors {
-				ctx, cancel := context.WithTimeout(context.Background(), o.options.timeout)
-				defer cancel()
 				err := o.monitor(ctx, MonitorCookie{DatabaseName: dbName, ID: id}, true, request)
 				if err != nil {
 					o.resetRPCClient()
@@ -361,12 +353,6 @@ func (o *ovsdbClient) tryEndpoint(ctx context.Context, u *url.URL) (string, erro
 		return "", fmt.Errorf("failed to open connection: %w", err)
 	}
 
-	if o.options.timeout != 0 {
-		if err = setTCPUserTimeout(c, o.options.timeout); err != nil {
-			return "", fmt.Errorf("failed to set TCP_USER_TIMEOUT: %v", err)
-		}
-	}
-
 	o.createRPC2Client(c)
 
 	serverDBNames, err := o.listDbs(ctx)
@@ -415,7 +401,12 @@ func (o *ovsdbClient) tryEndpoint(ctx context.Context, u *url.URL) (string, erro
 				db.cacheMutex.Unlock()
 				return "", err
 			}
-			db.api = newAPI(db.cache, o.logger, o.options.validateModel)
+			dbNameForWait := dbName
+			dbForWait := db
+			db.api = newAPI(db.cache, o.logger, o.options.validateModel, func(ctx context.Context) func() {
+				waitForCacheConsistent(ctx, dbForWait, o.logger, dbNameForWait)
+				return dbForWait.cacheMutex.RUnlock
+			})
 		}
 		db.cacheMutex.Unlock()
 	}
@@ -611,6 +602,13 @@ func (o *ovsdbClient) CurrentEndpoint() string {
 // server has disconnected
 func (o *ovsdbClient) DisconnectNotify() chan struct{} {
 	return o.disconnect
+}
+
+// isShutdown returns true if the client is in the process of shutting down
+func (o *ovsdbClient) isShutdown() bool {
+	o.shutdownMutex.Lock()
+	defer o.shutdownMutex.Unlock()
+	return o.shutdown
 }
 
 // RFC 7047 : Section 4.1.6 : Echo
@@ -845,7 +843,7 @@ func (o *ovsdbClient) transact(ctx context.Context, dbName string, skipChWrite b
 	}
 
 	args := ovsdb.NewTransactArgs(dbName, operation...)
-	if o.rpcClient == nil {
+	if o.rpcClient == nil || o.isShutdown() {
 		return nil, ErrNotConnected
 	}
 	dbgLogger := logger.WithValues("database", dbName).V(4)
@@ -886,7 +884,7 @@ func (o *ovsdbClient) MonitorCancel(ctx context.Context, cookie MonitorCookie) e
 	args := ovsdb.NewMonitorCancelArgs(cookie)
 	o.rpcMutex.Lock()
 	defer o.rpcMutex.Unlock()
-	if o.rpcClient == nil {
+	if o.rpcClient == nil || o.isShutdown() {
 		return ErrNotConnected
 	}
 	err := o.rpcClient.CallWithContext(ctx, "monitor_cancel", args, &reply)
@@ -941,7 +939,7 @@ func (o *ovsdbClient) monitor(ctx context.Context, cookie MonitorCookie, reconne
 		o.rpcMutex.RLock()
 		defer o.rpcMutex.RUnlock()
 	}
-	if o.rpcClient == nil {
+	if o.rpcClient == nil || o.isShutdown() {
 		return ErrNotConnected
 	}
 	if len(monitor.Errors) != 0 {
@@ -1091,13 +1089,13 @@ func (o *ovsdbClient) monitor(ctx context.Context, cookie MonitorCookie, reconne
 	return err
 }
 
-// Echo tests the liveness of the OVSDB connection
+// Echo tests the liveness of the OVSDB connetion
 func (o *ovsdbClient) Echo(ctx context.Context) error {
 	args := ovsdb.NewEchoArgs()
 	var reply []any
 	o.rpcMutex.RLock()
 	defer o.rpcMutex.RUnlock()
-	if o.rpcClient == nil {
+	if o.rpcClient == nil || o.isShutdown() {
 		return ErrNotConnected
 	}
 	err := o.rpcClient.CallWithContext(ctx, "echo", args, &reply)
@@ -1105,6 +1103,7 @@ func (o *ovsdbClient) Echo(ctx context.Context) error {
 		if err == rpc2.ErrShutdown {
 			return ErrNotConnected
 		}
+		return err
 	}
 	if !reflect.DeepEqual(args, reply) {
 		return fmt.Errorf("incorrect server response: %v, %v", args, reply)
@@ -1169,6 +1168,8 @@ func (o *ovsdbClient) watchForLeaderChange() error {
 				if sid == activeEndpoint.serverID {
 					o.logger.V(3).Info("endpoint lost leader, reconnecting",
 						"endpoint", activeEndpoint.address, "sid", sid)
+					// don't immediately reconnect to the active endpoint since it's no longer leader
+					o.moveEndpointLast(0)
 					o._disconnect()
 				} else {
 					o.logger.V(3).Info("endpoint lost leader but had unexpected server ID",
@@ -1257,7 +1258,7 @@ func (o *ovsdbClient) handleDisconnectNotification() {
 	// wait for client related handlers to shutdown
 	o.handlerShutdown.Wait()
 	o.rpcMutex.Lock()
-	if o.options.reconnect && !o.shutdown {
+	if o.options.reconnect && !o.isShutdown() {
 		o.rpcClient = nil
 		o.rpcMutex.Unlock()
 		suppressionCounter := 1
@@ -1269,7 +1270,9 @@ func (o *ovsdbClient) handleDisconnectNotification() {
 				db.deferUpdates = true
 				db.cacheMutex.Unlock()
 			}
-			err := o.connect(context.Background(), true)
+			ctx, cancel := context.WithTimeout(context.Background(), o.options.timeout)
+			defer cancel()
+			err := o.connect(ctx, true)
 			if err != nil {
 				if suppressionCounter < 5 {
 					o.logger.V(2).Error(err, "failed to reconnect")
@@ -1282,7 +1285,6 @@ func (o *ovsdbClient) handleDisconnectNotification() {
 			return err
 		}
 		o.logger.V(3).Info("connection lost, reconnecting", "endpoint", o.endpoints[0].address)
-		o.moveEndpointLast(0)
 		err := backoff.Retry(connect, o.options.backoff)
 		if err != nil {
 			// TODO: We should look at passing this back to the
@@ -1376,21 +1378,15 @@ func isCacheConsistent(db *database) bool {
 
 // best effort to ensure cache is in a good state for reading. RLocks the
 // database's cache before returning; caller must always unlock.
-func (o *ovsdbClient) waitForCacheConsistent(ctx context.Context, db *database, logger *logr.Logger, dbName string) error {
+func waitForCacheConsistent(ctx context.Context, db *database, logger *logr.Logger, dbName string) {
 	if !hasMonitors(db) {
 		db.cacheMutex.RLock()
-		return nil
+		return
 	}
-
-	if err := o.Echo(ctx); err != nil {
-		db.cacheMutex.RLock()
-		return err
-	}
-
 	// Check immediately as a fastpath
 	db.cacheMutex.RLock()
 	if isCacheConsistent(db) {
-		return nil
+		return
 	}
 	db.cacheMutex.RUnlock()
 
@@ -1402,11 +1398,11 @@ func (o *ovsdbClient) waitForCacheConsistent(ctx context.Context, db *database, 
 			logger.V(3).Info("warning: unable to ensure cache consistency for reading",
 				"database", dbName)
 			db.cacheMutex.RLock()
-			return nil
+			return
 		case <-ticker.C:
 			db.cacheMutex.RLock()
 			if isCacheConsistent(db) {
-				return nil
+				return
 			}
 			db.cacheMutex.RUnlock()
 		}
@@ -1425,13 +1421,7 @@ func hasMonitors(db *database) bool {
 
 // Get implements the API interface's Get function
 func (o *ovsdbClient) Get(ctx context.Context, model model.Model) error {
-	primaryDB := o.primaryDB()
-	err := o.waitForCacheConsistent(ctx, primaryDB, o.logger, o.primaryDBName)
-	defer primaryDB.cacheMutex.RUnlock()
-	if err != nil {
-		return err
-	}
-	return primaryDB.api.Get(ctx, model)
+	return o.primaryDB().api.Get(ctx, model)
 }
 
 // Create implements the API interface's Create function
@@ -1441,13 +1431,7 @@ func (o *ovsdbClient) Create(models ...model.Model) ([]ovsdb.Operation, error) {
 
 // List implements the API interface's List function
 func (o *ovsdbClient) List(ctx context.Context, result any) error {
-	primaryDB := o.primaryDB()
-	err := o.waitForCacheConsistent(ctx, primaryDB, o.logger, o.primaryDBName)
-	defer primaryDB.cacheMutex.RUnlock()
-	if err != nil {
-		return err
-	}
-	return primaryDB.api.List(ctx, result)
+	return o.primaryDB().api.List(ctx, result)
 }
 
 // Where implements the API interface's Where function
@@ -1463,17 +1447,6 @@ func (o *ovsdbClient) WhereAny(m model.Model, conditions ...model.Condition) Con
 // WhereAll implements the API interface's WhereAll function
 func (o *ovsdbClient) WhereAll(m model.Model, conditions ...model.Condition) ConditionalAPI {
 	return o.primaryDB().api.WhereAll(m, conditions...)
-}
-
-// WherePredict implements the API interface's WherePredict function
-func (o *ovsdbClient) WherePredict(ctx context.Context, predicate interface{}) (ConditionalAPI, error) {
-	primaryDB := o.primaryDB()
-	err := o.waitForCacheConsistent(ctx, primaryDB, o.logger, o.primaryDBName)
-	defer primaryDB.cacheMutex.RUnlock()
-	if err != nil {
-		return nil, err
-	}
-	return o.primaryDB().api.WhereCache(predicate), nil
 }
 
 // WhereCache implements the API interface's WhereCache function
@@ -1497,7 +1470,7 @@ func (o *ovsdbClient) GetSelectResultsByIndex(ops []ovsdb.Operation, results []o
 
 	// Validate target parameter
 	slicePtr := reflect.ValueOf(target)
-	if slicePtr.Type().Kind() != reflect.Ptr || slicePtr.IsNil() {
+	if slicePtr.Type().Kind() != reflect.Pointer || slicePtr.IsNil() {
 		return &ErrWrongType{slicePtr.Type(), "target must be a non-nil pointer to a slice of models"}
 	}
 
@@ -1508,7 +1481,7 @@ func (o *ovsdbClient) GetSelectResultsByIndex(ops []ovsdb.Operation, results []o
 
 	// GetSelectResultsByIndex only accepts a pointer to a slice of pointers to models
 	modelType := sliceVal.Type().Elem()
-	if modelType.Kind() != reflect.Ptr {
+	if modelType.Kind() != reflect.Pointer {
 		return &ErrWrongType{slicePtr.Type(), "target must be a pointer to a slice of model pointers"}
 	}
 	modelType = modelType.Elem()

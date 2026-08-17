@@ -1260,7 +1260,7 @@ func valueFromColumnKey(info *mapper.Info, columnKey model.ColumnKey) (any, erro
 	}
 	// if the value is a non-nil pointer of an optional, dereference
 	v := reflect.ValueOf(val)
-	if v.Kind() == reflect.Ptr && !v.IsNil() {
+	if v.Kind() == reflect.Pointer && !v.IsNil() {
 		val = v.Elem().Interface()
 	}
 	return val, err

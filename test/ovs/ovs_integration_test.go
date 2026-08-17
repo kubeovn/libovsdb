@@ -843,7 +843,8 @@ func (suite *OVSIntegrationSuite) TestInsertDuplicateTransactIntegration() {
 
 	_, err = suite.createBridge("br-dup", nil, nil)
 	suite.Require().Error(err)
-	suite.IsType(&ovsdb.ConstraintViolation{}, err)
+	var constraintViolation *ovsdb.ConstraintViolation
+	suite.ErrorAs(err, &constraintViolation)
 }
 
 func (suite *OVSIntegrationSuite) TestUpdate() {

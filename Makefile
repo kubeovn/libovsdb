@@ -1,4 +1,4 @@
-OVS_VERSION ?= v3.5.0
+OVS_VERSION ?= v3.7.1
 
 TESTS ?=
 
@@ -14,6 +14,15 @@ modelgen:
 prebuild: modelgen ovsdb/serverdb/_server.ovsschema example/vswitchd/ovs.ovsschema
 	@echo "+ $@"
 	@go generate -v ./...
+
+.PHONY: check-generated
+check-generated: prebuild
+	@echo "+ $@"
+	@if ! git diff --quiet; then \
+		echo "Error: generated files are out of date. Please run 'make prebuild' and commit the changes."; \
+		git diff --stat; \
+		exit 1; \
+	fi
 
 .PHONY: build
 build: prebuild
@@ -36,7 +45,7 @@ coverage: test integration-test
 	@cat unit.cov integration.cov > profile.cov
 
 .PHONY: bench
-bench: install-deps prebuild
+bench: prebuild
 	@echo "+ $@"
 	@go test -run=XXX -count=3 $(if $(TESTS),-bench $(TESTS),-bench .) ./... | tee bench.out
 	@benchstat bench.out
@@ -44,10 +53,10 @@ bench: install-deps prebuild
 .PHONY: install-deps
 install-deps:
 	@echo "+ $@"
-	@./hack/install-deps.sh
+	@mise install
 
 .PHONY: lint
-lint: install-deps prebuild
+lint: prebuild
 	@echo "+ $@"
 	@golangci-lint run
 
