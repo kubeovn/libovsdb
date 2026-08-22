@@ -108,6 +108,9 @@ type ovsdbClient struct {
 	stopCh                chan struct{}
 	disconnect            chan struct{}
 	disconnectCleanupDone chan struct{}
+	reconnectCancel       context.CancelFunc
+	reconnectDone         chan struct{}
+	reconnectGeneration   uint64
 	shutdown              bool
 	shutdownMutex         sync.Mutex
 
@@ -215,6 +218,9 @@ func (o *ovsdbClient) Connect(ctx context.Context) error {
 		}
 		return err
 	}
+	o.shutdownMutex.Lock()
+	o.shutdown = false
+	o.shutdownMutex.Unlock()
 	if o.options.leaderOnly {
 		if err := o.watchForLeaderChange(); err != nil {
 			return err
@@ -294,10 +300,13 @@ func (o *ovsdbClient) connectionTimeout() time.Duration {
 func (o *ovsdbClient) connect(ctx context.Context, reconnect bool) error {
 	for {
 		o.rpcMutex.Lock()
-		if o.disconnectCleanupDone == nil {
+		if reconnect || (o.disconnectCleanupDone == nil && o.reconnectDone == nil) {
 			break
 		}
 		done := o.disconnectCleanupDone
+		if done == nil {
+			done = o.reconnectDone
+		}
 		o.rpcMutex.Unlock()
 		select {
 		case <-done:
@@ -1337,6 +1346,7 @@ func (o *ovsdbClient) handleDisconnectNotification() {
 	disconnectedEndpointRevision := o.activeEndpointRevision
 	shouldReconnect := o.options.reconnect && !o.isShutdown()
 	cleanupDone := make(chan struct{})
+	var reconnectDone chan struct{}
 	o.disconnectCleanupDone = cleanupDone
 	o.connected = false
 	o.activeEndpoint = ""
@@ -1353,11 +1363,15 @@ func (o *ovsdbClient) handleDisconnectNotification() {
 	// must remain open until those transactions have completed.
 	o.trafficSeen = nil
 	o.rpcClient = nil
-	close(cleanupDone)
-	o.disconnectCleanupDone = nil
 	if shouldReconnect && !o.isShutdown() {
 		o.rotateDisconnectedEndpoint(disconnectedEndpoint, disconnectedEndpointRevision)
 		reconnectEndpoint := o.endpoints[0].address
+		reconnectCtx, reconnectCancel := context.WithCancel(context.Background())
+		o.reconnectCancel = reconnectCancel
+		o.reconnectGeneration++
+		reconnectGeneration := o.reconnectGeneration
+		reconnectDone = make(chan struct{})
+		o.reconnectDone = reconnectDone
 		o.rpcMutex.Unlock()
 		suppressionCounter := 1
 		connect := func() error {
@@ -1368,7 +1382,7 @@ func (o *ovsdbClient) handleDisconnectNotification() {
 				db.deferUpdates = true
 				db.cacheMutex.Unlock()
 			}
-			err := o.connect(context.Background(), true)
+			err := o.connect(reconnectCtx, true)
 			if err != nil {
 				if suppressionCounter < 5 {
 					o.logger.V(2).Error(err, "failed to reconnect")
@@ -1381,14 +1395,37 @@ func (o *ovsdbClient) handleDisconnectNotification() {
 			return err
 		}
 		o.logger.V(3).Info("connection lost, reconnecting", "endpoint", reconnectEndpoint)
-		err := backoff.Retry(connect, o.options.backoff)
-		if err != nil {
+		err := backoff.Retry(connect, backoff.WithContext(o.options.backoff, reconnectCtx))
+		o.rpcMutex.Lock()
+		if o.reconnectGeneration == reconnectGeneration {
+			o.reconnectCancel = nil
+		}
+		o.rpcMutex.Unlock()
+		reconnectCancel()
+		if err == nil || errors.Is(err, context.Canceled) {
+			if err == nil {
+				o.rpcMutex.Lock()
+				close(cleanupDone)
+				if o.disconnectCleanupDone == cleanupDone {
+					o.disconnectCleanupDone = nil
+				}
+				close(reconnectDone)
+				if o.reconnectDone == reconnectDone {
+					o.reconnectDone = nil
+				}
+				o.rpcMutex.Unlock()
+			}
+			if err == nil {
+				// this goroutine finishes, and is replaced with a new one (from Connect)
+				return
+			}
+			// Close canceled the retry loop; continue with full state cleanup.
+			o.rpcMutex.Lock()
+		} else if !o.isShutdown() {
 			// TODO: We should look at passing this back to the
 			// caller to handle
 			panic(err)
 		}
-		// this goroutine finishes, and is replaced with a new one (from Connect)
-		return
 	}
 
 	// clear connection state
@@ -1397,25 +1434,33 @@ func (o *ovsdbClient) handleDisconnectNotification() {
 
 	for _, db := range o.databases {
 		db.cacheMutex.Lock()
-		defer db.cacheMutex.Unlock()
 		db.cache = nil
 		// need to defer updates if/when we reconnect and clear any stale updates
 		db.deferUpdates = true
 		db.deferredUpdates = make([]*bufferedUpdate, 0)
 
 		db.modelMutex.Lock()
-		defer db.modelMutex.Unlock()
 		db.model = model.NewPartialDatabaseModel(db.model.Client())
 
 		db.monitorsMutex.Lock()
-		defer db.monitorsMutex.Unlock()
 		db.monitors = make(map[string]*Monitor)
+		db.monitorsMutex.Unlock()
+		db.modelMutex.Unlock()
+		db.cacheMutex.Unlock()
 	}
 	o.metrics.numMonitors.Set(0)
-
-	o.shutdownMutex.Lock()
-	defer o.shutdownMutex.Unlock()
-	o.shutdown = false
+	o.rpcMutex.Lock()
+	close(cleanupDone)
+	if o.disconnectCleanupDone == cleanupDone {
+		o.disconnectCleanupDone = nil
+	}
+	if reconnectDone != nil {
+		close(reconnectDone)
+		if o.reconnectDone == reconnectDone {
+			o.reconnectDone = nil
+		}
+	}
+	o.rpcMutex.Unlock()
 
 	select {
 	case o.disconnect <- struct{}{}:
@@ -1452,12 +1497,15 @@ func (o *ovsdbClient) Close() {
 	o.rpcMutex.Lock()
 	defer o.rpcMutex.Unlock()
 	o.connected = false
+	o.shutdownMutex.Lock()
+	o.shutdown = true
+	o.shutdownMutex.Unlock()
+	if o.reconnectCancel != nil {
+		o.reconnectCancel()
+	}
 	if o.rpcClient == nil {
 		return
 	}
-	o.shutdownMutex.Lock()
-	defer o.shutdownMutex.Unlock()
-	o.shutdown = true
 	o.rpcClient.Close()
 }
 

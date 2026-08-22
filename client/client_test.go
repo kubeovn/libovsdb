@@ -952,6 +952,18 @@ func TestReconnectTimeoutValidation(t *testing.T) {
 	}
 }
 
+func TestConnectWaitsForDisconnectCleanup(t *testing.T) {
+	var connected, disconnected int32
+	client, _, _ := newClientServerPair(t, &connected, &disconnected, true)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	for i := 0; i < 20; i++ {
+		client.Disconnect()
+		require.NoError(t, client.Connect(ctx))
+	}
+}
+
 func TestSetOption(t *testing.T) {
 	o, err := newOVSDBClient(defDB)
 	require.NoError(t, err)
