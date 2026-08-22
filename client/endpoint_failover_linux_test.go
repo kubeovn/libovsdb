@@ -318,6 +318,25 @@ func TestClientReconnectTriesHealthyEndpointAfterBlackholedStandby(t *testing.T)
 	}
 }
 
+func TestClientCloseCancelsReconnect(t *testing.T) {
+	client, _, _, _, _ := failoverClient(t, false,
+		WithReconnect(time.Second, backoff.NewConstantBackOff(10*time.Millisecond)))
+	ovsdbClient := client.(*ovsdbClient)
+	client.UpdateEndpoints([]string{"tcp:127.0.0.1:1"})
+	require.Eventually(t, func() bool {
+		ovsdbClient.rpcMutex.RLock()
+		defer ovsdbClient.rpcMutex.RUnlock()
+		return ovsdbClient.reconnectDone != nil
+	}, time.Second, time.Millisecond)
+
+	client.Close()
+	require.Eventually(t, func() bool {
+		ovsdbClient.rpcMutex.RLock()
+		defer ovsdbClient.rpcMutex.RUnlock()
+		return ovsdbClient.reconnectDone == nil && ovsdbClient.rpcClient == nil && ovsdbClient.isShutdown()
+	}, time.Second, time.Millisecond)
+}
+
 func TestUpdateEndpointsHonorsCallerOrderWhileDisconnected(t *testing.T) {
 	endpoint1 := "tcp:127.0.0.1:6641"
 	endpoint2 := "tcp:127.0.0.1:6642"
