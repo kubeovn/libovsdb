@@ -89,6 +89,22 @@ func TestOpRowsSerialization(t *testing.T) {
 	}
 }
 
+func TestWaitRequiredEmptyArrays(t *testing.T) {
+	for _, empty := range []bool{false, true} {
+		op := Operation{Op: OperationWait, Table: "Port", Until: "=="}
+		if empty {
+			op.Where = []Condition{}
+			op.Rows = []Row{}
+		}
+		data, err := json.Marshal(op)
+		require.NoError(t, err)
+		var members map[string]json.RawMessage
+		require.NoError(t, json.Unmarshal(data, &members))
+		assert.JSONEq(t, `[]`, string(members["where"]))
+		assert.JSONEq(t, `[]`, string(members["rows"]))
+	}
+}
+
 func TestValidateOvsSet(t *testing.T) {
 	goSlice := []int{1, 2, 3, 4}
 	oSet, err := NewOvsSet(goSlice)
