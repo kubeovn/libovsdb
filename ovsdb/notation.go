@@ -50,11 +50,25 @@ type Operation struct {
 }
 
 // MarshalJSON marshalls 'Operation' to a byte array
-// For 'select' operations, we don't omit the 'Where' field
-// to allow selecting all rows of a table
+// Select and wait operations require where even when selecting all rows.
+// A select with nil Columns intentionally omits columns to request all columns.
+// Wait also requires rows, including an empty array when expecting no rows.
 func (o Operation) MarshalJSON() ([]byte, error) {
 	type OpAlias Operation
 	switch o.Op {
+	case OperationWait:
+		where, rows := o.Where, o.Rows
+		if where == nil {
+			where = []Condition{}
+		}
+		if rows == nil {
+			rows = []Row{}
+		}
+		return json.Marshal(&struct {
+			Where []Condition `json:"where"`
+			Rows  []Row       `json:"rows"`
+			OpAlias
+		}{Where: where, Rows: rows, OpAlias: OpAlias(o)})
 	case "select":
 		where := o.Where
 		if where == nil {
