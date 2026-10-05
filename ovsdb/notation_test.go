@@ -105,6 +105,18 @@ func TestWaitRequiredEmptyArrays(t *testing.T) {
 	}
 }
 
+func TestSelectAllColumnsSerialization(t *testing.T) {
+	op := Operation{Op: OperationSelect, Table: "Port"}
+	data, err := json.Marshal(op)
+	require.NoError(t, err)
+
+	var members map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(data, &members))
+	assert.JSONEq(t, `[]`, string(members["where"]))
+	_, hasColumns := members["columns"]
+	assert.False(t, hasColumns)
+}
+
 func TestValidateOvsSet(t *testing.T) {
 	goSlice := []int{1, 2, 3, 4}
 	oSet, err := NewOvsSet(goSlice)

@@ -51,6 +51,7 @@ type Operation struct {
 
 // MarshalJSON marshalls 'Operation' to a byte array
 // Select and wait operations require where even when selecting all rows.
+// A select with nil Columns intentionally omits columns to request all columns.
 // Wait also requires rows, including an empty array when expecting no rows.
 func (o Operation) MarshalJSON() ([]byte, error) {
 	type OpAlias Operation
