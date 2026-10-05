@@ -21,7 +21,7 @@ func TestNewWaitTransactArgs(t *testing.T) {
 	operation := Operation{Op: "wait", Table: "Bridge", Timeout: &i}
 	args := NewTransactArgs(database, operation)
 	argString, _ := json.Marshal(args)
-	expected := `["Open_vSwitch",{"op":"wait","table":"Bridge","timeout":0}]`
+	expected := `["Open_vSwitch",{"where":[],"rows":[],"op":"wait","table":"Bridge","timeout":0}]`
 	if string(argString) != expected {
 		t.Error("Expected: ", expected, " Got: ", string(argString))
 	}
