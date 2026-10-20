@@ -72,6 +72,17 @@ func TestLeaderMonitorFollowsDatabaseModel(t *testing.T) {
 			setLeader(t, admin, row, true)
 			require.Eventually(t, c.Connected, 3*time.Second, time.Millisecond)
 			checkMonitor(true)
+
+			// Explicitly connecting after Close must recreate the internal monitor.
+			c.Close()
+			select {
+			case <-c.DisconnectNotify():
+			case <-time.After(3 * time.Second):
+				t.Fatal("close did not finish")
+			}
+			require.NoError(t, c.Connect(t.Context()))
+			checkMonitor(true)
+			require.NoError(t, c.Echo(t.Context()))
 		})
 	}
 }

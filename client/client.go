@@ -219,9 +219,6 @@ func (o *ovsdbClient) Connect(ctx context.Context) error {
 		}
 		return err
 	}
-	o.shutdownMutex.Lock()
-	o.shutdown = false
-	o.shutdownMutex.Unlock()
 	return nil
 }
 
@@ -313,6 +310,13 @@ func (o *ovsdbClient) connect(ctx context.Context, reconnect bool) error {
 	defer o.rpcMutex.Unlock()
 	if o.rpcClient != nil {
 		return ErrAlreadyConnected
+	}
+	if !reconnect {
+		// Reset shutdown for an explicit connection attempt under rpcMutex,
+		// before checking leadership and installing the internal monitor.
+		o.shutdownMutex.Lock()
+		o.shutdown = false
+		o.shutdownMutex.Unlock()
 	}
 	ctx, cancel := contextWithOptionalTimeout(ctx, o.connectionTimeout())
 	defer cancel()
