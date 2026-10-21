@@ -91,7 +91,8 @@ func WithEndpoint(endpoint string) Option {
 }
 
 // WithLeaderOnly tells the client to treat endpoints that are clustered
-// and not the leader as down.
+// and not the leader as down. The model is checked on each connection.
+// Only clustered databases are monitored for leadership changes.
 func WithLeaderOnly(leaderOnly bool) Option {
 	return func(o *options) error {
 		o.leaderOnly = leaderOnly

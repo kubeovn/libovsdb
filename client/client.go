@@ -81,8 +81,9 @@ type bufferedUpdate struct {
 }
 
 type epInfo struct {
-	address  string
-	serverID string
+	address       string
+	serverID      string
+	leaderMonitor bool
 }
 
 // ovsdbClient is an OVSDB client
@@ -98,6 +99,7 @@ type ovsdbClient struct {
 	endpointsRevision      uint64
 	activeEndpoint         string
 	activeEndpointRevision uint64
+	leaderMonitorCookie    *MonitorCookie
 
 	// The name of the "primary" database - that is to say, the DB
 	// that the user expects to interact with.
@@ -218,14 +220,6 @@ func (o *ovsdbClient) Connect(ctx context.Context) error {
 		}
 		return err
 	}
-	o.shutdownMutex.Lock()
-	o.shutdown = false
-	o.shutdownMutex.Unlock()
-	if o.options.leaderOnly {
-		if err := o.watchForLeaderChange(); err != nil {
-			return err
-		}
-	}
 	return nil
 }
 
@@ -318,6 +312,13 @@ func (o *ovsdbClient) connect(ctx context.Context, reconnect bool) error {
 	if o.rpcClient != nil {
 		return ErrAlreadyConnected
 	}
+	if !reconnect {
+		// Reset shutdown for an explicit connection attempt under rpcMutex,
+		// before checking leadership and installing the internal monitor.
+		o.shutdownMutex.Lock()
+		o.shutdown = false
+		o.shutdownMutex.Unlock()
+	}
 	ctx, cancel := contextWithOptionalTimeout(ctx, o.connectionTimeout())
 	defer cancel()
 
@@ -329,7 +330,7 @@ func (o *ovsdbClient) connect(ctx context.Context, reconnect bool) error {
 			return err
 		}
 		endpointCtx, cancel := o.endpointContext(ctx, len(o.endpoints)-i)
-		sid, err := o.tryEndpoint(endpointCtx, u)
+		sid, leaderMonitor, err := o.tryEndpoint(endpointCtx, u)
 		cancel()
 		if err != nil {
 			o.resetRPCClient()
@@ -338,6 +339,7 @@ func (o *ovsdbClient) connect(ctx context.Context, reconnect bool) error {
 		} else {
 			o.logger.V(3).Info("successfully connected", "endpoint", endpoint.address, "sid", sid)
 			endpoint.serverID = sid
+			endpoint.leaderMonitor = leaderMonitor
 			o.moveEndpointFirst(i)
 			connected = true
 			break
@@ -360,6 +362,10 @@ func (o *ovsdbClient) connect(ctx context.Context, reconnect bool) error {
 	if reconnect {
 		o.logger.V(3).Info("reconnected - restarting monitors")
 		for dbName, db := range o.databases {
+			if o.options.leaderOnly && dbName == serverDB {
+				// The leader monitor is reconciled separately using the new backend's model.
+				continue
+			}
 			db.monitorsMutex.Lock()
 
 			// Purge entire cache if no monitors exist to update dynamically
@@ -380,6 +386,13 @@ func (o *ovsdbClient) connect(ctx context.Context, reconnect bool) error {
 				}
 			}
 			db.monitorsMutex.Unlock()
+		}
+	}
+
+	if o.options.leaderOnly {
+		if err := o.watchForLeaderChange(ctx); err != nil {
+			o.resetRPCClient()
+			return err
 		}
 	}
 
@@ -406,9 +419,9 @@ func (o *ovsdbClient) connect(ctx context.Context, reconnect bool) error {
 	return nil
 }
 
-// tryEndpoint connects to a single database endpoint. Returns the
-// server ID (if clustered) on success, or an error.
-func (o *ovsdbClient) tryEndpoint(ctx context.Context, u *url.URL) (string, error) {
+// tryEndpoint connects to a single database endpoint. It returns the server
+// ID (if clustered), whether leader monitoring is needed, and an error.
+func (o *ovsdbClient) tryEndpoint(ctx context.Context, u *url.URL) (string, bool, error) {
 	o.logger.V(3).Info("trying to connect", "endpoint", fmt.Sprintf("%v", u))
 	var dialer net.Dialer
 	var err error
@@ -428,18 +441,18 @@ func (o *ovsdbClient) tryEndpoint(ctx context.Context, u *url.URL) (string, erro
 		err = fmt.Errorf("unknown network protocol %s", u.Scheme)
 	}
 	if err != nil {
-		return "", fmt.Errorf("failed to open connection: %w", err)
+		return "", false, fmt.Errorf("failed to open connection: %w", err)
 	}
 	if err := setTCPUserTimeout(c, o.options.timeout); err != nil {
 		_ = c.Close()
-		return "", fmt.Errorf("failed to configure connection: %w", err)
+		return "", false, fmt.Errorf("failed to configure connection: %w", err)
 	}
 
 	o.createRPC2Client(c)
 
 	serverDBNames, err := o.listDbs(ctx)
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 
 	// for every requested database, ensure the DB exists in the server and
@@ -454,13 +467,13 @@ func (o *ovsdbClient) tryEndpoint(ctx context.Context, u *url.URL) (string, erro
 			}
 		}
 		if !found {
-			return "", fmt.Errorf("target database %s not found", dbName)
+			return "", false, fmt.Errorf("target database %s not found", dbName)
 		}
 
 		// load and validate the schema
 		schema, err := o.getSchema(ctx, dbName)
 		if err != nil {
-			return "", err
+			return "", false, err
 		}
 
 		db.modelMutex.Lock()
@@ -472,7 +485,7 @@ func (o *ovsdbClient) tryEndpoint(ctx context.Context, u *url.URL) (string, erro
 			for _, err := range errors {
 				combined = append(combined, err.Error())
 			}
-			return "", fmt.Errorf("database %s validation error (%d): %s",
+			return "", false, fmt.Errorf("database %s validation error (%d): %s",
 				dbName, len(errors), strings.Join(combined, ". "))
 		}
 
@@ -481,7 +494,13 @@ func (o *ovsdbClient) tryEndpoint(ctx context.Context, u *url.URL) (string, erro
 			db.cache, err = cache.NewTableCache(db.model, nil, o.logger)
 			if err != nil {
 				db.cacheMutex.Unlock()
-				return "", err
+				return "", false, err
+			}
+			if o.options.leaderOnly && dbName == serverDB {
+				db.cache.AddEventHandler(&cache.EventHandlerFuncs{
+					AddFunc:    func(table string, n model.Model) { o.handleLeaderChange(table, n) },
+					UpdateFunc: func(table string, _, n model.Model) { o.handleLeaderChange(table, n) },
+				})
 			}
 			dbNameForWait := dbName
 			dbForWait := db
@@ -495,17 +514,19 @@ func (o *ovsdbClient) tryEndpoint(ctx context.Context, u *url.URL) (string, erro
 
 	// check that this is the leader
 	var sid string
+	var leaderMonitor bool
 	if o.options.leaderOnly {
 		var leader bool
-		leader, sid, err = o.isEndpointLeader(ctx)
+		leader, sid, leaderMonitor, err = o.isEndpointLeader(ctx)
 		if err != nil {
-			return "", err
+			return "", false, err
 		}
 		if !leader {
-			return "", fmt.Errorf("endpoint is not leader")
+			return "", false, fmt.Errorf("endpoint is not leader")
 		}
+		return sid, leaderMonitor, nil
 	}
-	return sid, nil
+	return sid, false, nil
 }
 
 // createRPC2Client creates an rpcClient using the provided connection
@@ -533,11 +554,12 @@ func (o *ovsdbClient) createRPC2Client(conn net.Conn) {
 	go o.rpcClient.Run()
 }
 
-// isEndpointLeader returns true if the currently connected endpoint is leader,
-// otherwise false or an error. If the currently connected endpoint is the leader
-// and the database is clustered, also returns the database's Server ID.
+// isEndpointLeader returns whether the currently connected endpoint is leader,
+// the database's Server ID when it is clustered, and whether a leader monitor
+// is needed. A monitor is needed when the database is clustered or its model is
+// not known yet.
 // Assumes rpcMutex is held.
-func (o *ovsdbClient) isEndpointLeader(ctx context.Context) (bool, string, error) {
+func (o *ovsdbClient) isEndpointLeader(ctx context.Context) (bool, string, bool, error) {
 	op := ovsdb.Operation{
 		Op:      ovsdb.OperationSelect,
 		Table:   "Database",
@@ -545,21 +567,22 @@ func (o *ovsdbClient) isEndpointLeader(ctx context.Context) (bool, string, error
 	}
 	results, err := o.transact(ctx, serverDB, true, op)
 	if err != nil {
-		return false, "", fmt.Errorf("could not check if server was leader: %w", err)
+		return false, "", false, fmt.Errorf("could not check if server was leader: %w", err)
 	}
-	// for now, if no rows are returned, just accept this server
+	// If no result or row is returned, accept this server for now but keep a
+	// monitor so a later Database row can establish clustered leadership.
 	if len(results) != 1 {
-		return true, "", nil
+		return true, "", true, nil
 	}
 	result := results[0]
 	if len(result.Rows) == 0 {
-		return true, "", nil
+		return true, "", true, nil
 	}
 
 	for _, row := range result.Rows {
 		dbName, ok := row["name"].(string)
 		if !ok {
-			return false, "", fmt.Errorf("could not parse name")
+			return false, "", false, fmt.Errorf("could not parse name")
 		}
 		if dbName != o.primaryDBName {
 			continue
@@ -567,33 +590,37 @@ func (o *ovsdbClient) isEndpointLeader(ctx context.Context) (bool, string, error
 
 		model, ok := row["model"].(string)
 		if !ok {
-			return false, "", fmt.Errorf("could not parse model")
+			return false, "", false, fmt.Errorf("could not parse model")
 		}
 
-		// the database reports whether or not it is part of a cluster via the
-		// "model" column. If it's not clustered, it is by definition leader.
-		if model != serverdb.DatabaseModelClustered {
-			return true, "", nil
+		// Only the known standalone and relay models are explicitly
+		// non-clustered. Any other model is kept under observation so a later
+		// update cannot leave leader-only mode without a watcher.
+		if model == string(serverdb.DatabaseModelStandalone) || model == string(serverdb.DatabaseModelRelay) {
+			return true, "", false, nil
+		}
+		if model != string(serverdb.DatabaseModelClustered) {
+			return true, "", true, nil
 		}
 
 		// Clustered database must have a Server ID
 		sid, ok := row["sid"].(ovsdb.UUID)
 		if !ok {
-			return false, "", fmt.Errorf("could not parse server id")
+			return false, "", false, fmt.Errorf("could not parse server id")
 		}
 
 		leader, ok := row["leader"].(bool)
 		if !ok {
-			return false, "", fmt.Errorf("could not parse leader")
+			return false, "", false, fmt.Errorf("could not parse leader")
 		}
 
-		return leader, sid.GoUUID, nil
+		return leader, sid.GoUUID, true, nil
 	}
 
-	// Extremely unlikely: there is no _Server row for the desired DB (which we made sure existed)
-	// for now, just continue
-	o.logger.V(3).Info("Couldn't find a row in _Server for our database. Continuing without leader detection", "database", o.primaryDBName)
-	return true, "", nil
+	// There is no _Server row for the desired DB yet. Keep monitoring because
+	// the row may be created after this connection is established.
+	o.logger.V(3).Info("Couldn't find a row in _Server for our database. Keeping leader monitoring enabled", "database", o.primaryDBName)
+	return true, "", true, nil
 }
 
 func (o *ovsdbClient) primaryDB() *database {
@@ -638,13 +665,15 @@ func (o *ovsdbClient) UpdateEndpoints(endpoints []string) {
 			activeIdx = i
 		}
 		var serverID string
+		var leaderMonitor bool
 		for _, origin := range originEps {
 			if address == origin.address {
 				serverID = origin.serverID
+				leaderMonitor = origin.leaderMonitor
 				break
 			}
 		}
-		newEps = append(newEps, &epInfo{address: address, serverID: serverID})
+		newEps = append(newEps, &epInfo{address: address, serverID: serverID, leaderMonitor: leaderMonitor})
 	}
 	o.endpoints = newEps
 	o.endpointsRevision++
@@ -1025,14 +1054,19 @@ func newMonitorRequest(data *mapper.Info, fields []string, conditions []ovsdb.Co
 }
 
 // monitor must only be called with a lock on monitorsMutex
-//
-//gocyclo:ignore
 func (o *ovsdbClient) monitor(ctx context.Context, cookie MonitorCookie, reconnecting bool, monitor *Monitor) error {
 	// if we're reconnecting, we already hold the rpcMutex
 	if !reconnecting {
 		o.rpcMutex.RLock()
 		defer o.rpcMutex.RUnlock()
 	}
+	return o.monitorLocked(ctx, cookie, reconnecting, monitor)
+}
+
+// monitorLocked requires rpcMutex and the database's monitorsMutex to be held.
+//
+//gocyclo:ignore
+func (o *ovsdbClient) monitorLocked(ctx context.Context, cookie MonitorCookie, reconnecting bool, monitor *Monitor) error {
 	if o.rpcClient == nil || o.isShutdown() {
 		return ErrNotConnected
 	}
@@ -1119,12 +1153,12 @@ func (o *ovsdbClient) monitor(ctx context.Context, cookie MonitorCookie, reconne
 			if monitor.Method == ovsdb.ConditionalMonitorSinceRPC {
 				o.logger.V(3).Error(err, "method monitor_cond_since not supported, falling back to monitor_cond")
 				monitor.Method = ovsdb.ConditionalMonitorRPC
-				return o.monitor(ctx, cookie, reconnecting, monitor)
+				return o.monitorLocked(ctx, cookie, reconnecting, monitor)
 			}
 			if monitor.Method == ovsdb.ConditionalMonitorRPC {
 				o.logger.V(3).Error(err, "method monitor_cond not supported, falling back to monitor")
 				monitor.Method = ovsdb.MonitorRPC
-				return o.monitor(ctx, cookie, reconnecting, monitor)
+				return o.monitorLocked(ctx, cookie, reconnecting, monitor)
 			}
 		}
 		return err
@@ -1205,74 +1239,76 @@ func (o *ovsdbClient) Echo(ctx context.Context) error {
 	return nil
 }
 
-// watchForLeaderChange will trigger a reconnect if the connected endpoint
-// ever loses leadership
-func (o *ovsdbClient) watchForLeaderChange() error {
-	updates := make(chan model.Model)
-	o.databases[serverDB].cache.AddEventHandler(&cache.EventHandlerFuncs{
-		UpdateFunc: func(table string, _, n model.Model) {
-			if table == "Database" {
-				updates <- n
-			}
-		},
-	})
-
-	m := newMonitor()
-	// NOTE: _Server does not support monitor_cond_since
-	m.Method = ovsdb.ConditionalMonitorRPC
-	m.Tables = []TableMonitor{{Table: "Database"}}
+// watchForLeaderChange reconciles the internal monitor for the connected backend.
+// A server ID is returned by isEndpointLeader only for clustered databases.
+// This must run on every connection, including reconnects through a load balancer.
+// Assumes rpcMutex is held.
+func (o *ovsdbClient) watchForLeaderChange(ctx context.Context) error {
 	db := o.databases[serverDB]
 	db.monitorsMutex.Lock()
 	defer db.monitorsMutex.Unlock()
-	err := o.monitor(context.Background(), newMonitorCookie(serverDB), false, m)
-	if err != nil {
-		return err
+	if !o.endpoints[0].leaderMonitor {
+		if o.leaderMonitorCookie != nil {
+			delete(db.monitors, o.leaderMonitorCookie.ID)
+			o.leaderMonitorCookie = nil
+			o.metrics.numMonitors.Dec()
+		}
+		db.cache.Purge(db.model)
+		return nil
 	}
 
-	go func() {
-		for m := range updates {
-			dbInfo, ok := m.(*serverdb.Database)
-			if !ok {
-				continue
-			}
-
-			// Ignore the dbInfo for _Server
-			if dbInfo.Name != o.primaryDBName {
-				continue
-			}
-
-			// Only handle leadership changes for clustered databases
-			if dbInfo.Model != serverdb.DatabaseModelClustered {
-				continue
-			}
-
-			// Clustered database servers must have a valid Server ID
-			var sid string
-			if dbInfo.Sid != nil {
-				sid = *dbInfo.Sid
-			}
-			if sid == "" {
-				o.logger.V(3).Info("clustered database update contained invalid server ID")
-				continue
-			}
-
-			o.rpcMutex.Lock()
-			if !dbInfo.Leader && o.connected {
-				activeEndpoint := o.endpoints[0]
-				if sid == activeEndpoint.serverID {
-					o.logger.V(3).Info("endpoint lost leader, reconnecting",
-						"endpoint", activeEndpoint.address, "sid", sid)
-					o._disconnect()
-				} else {
-					o.logger.V(3).Info("endpoint lost leader but had unexpected server ID",
-						"endpoint", activeEndpoint.address,
-						"expected", activeEndpoint.serverID, "found", sid)
-				}
-			}
-			o.rpcMutex.Unlock()
+	if o.leaderMonitorCookie != nil {
+		return o.monitorLocked(ctx, *o.leaderMonitorCookie, true, db.monitors[o.leaderMonitorCookie.ID])
+	}
+	m := newMonitor()
+	// _Server does not support monitor_cond_since.
+	m.Method = ovsdb.ConditionalMonitorRPC
+	m.Tables = []TableMonitor{{Table: "Database"}}
+	cookie := newMonitorCookie(serverDB)
+	if err := o.monitorLocked(ctx, cookie, false, m); err != nil {
+		// Populate can fail after registering the monitor. The connection is
+		// discarded by the caller, so remove its local registration as well.
+		if _, registered := db.monitors[cookie.ID]; registered {
+			delete(db.monitors, cookie.ID)
+			o.metrics.numMonitors.Dec()
 		}
-	}()
+		return err
+	}
+	o.leaderMonitorCookie = &cookie
 	return nil
+}
+
+// handleLeaderChange runs on the cache event processor, outside cache locks.
+// Handle initial rows too: leadership can change between the select and monitor.
+func (o *ovsdbClient) handleLeaderChange(table string, n model.Model) {
+	dbInfo, ok := n.(*serverdb.Database)
+	if table != "Database" || !ok || dbInfo.Name != o.primaryDBName ||
+		dbInfo.Model != serverdb.DatabaseModelClustered || dbInfo.Sid == nil {
+		return
+	}
+	o.rpcMutex.Lock()
+	defer o.rpcMutex.Unlock()
+	if !o.connected {
+		return
+	}
+	activeEndpoint := o.endpoints[0]
+	if dbInfo.Leader {
+		if activeEndpoint.serverID == "" {
+			activeEndpoint.serverID = *dbInfo.Sid
+		}
+		return
+	}
+	if activeEndpoint.serverID == "" {
+		o.logger.V(3).Info("endpoint is not leader, reconnecting",
+			"endpoint", activeEndpoint.address, "sid", *dbInfo.Sid)
+		o._disconnect()
+		return
+	}
+	if *dbInfo.Sid == activeEndpoint.serverID {
+		o.logger.V(3).Info("endpoint lost leader, reconnecting",
+			"endpoint", activeEndpoint.address, "sid", *dbInfo.Sid)
+		o._disconnect()
+	}
 }
 
 func (o *ovsdbClient) handleClientErrors(stopCh <-chan struct{}) {
@@ -1450,6 +1486,7 @@ func (o *ovsdbClient) handleDisconnectNotification() {
 	}
 	o.metrics.numMonitors.Set(0)
 	o.rpcMutex.Lock()
+	o.leaderMonitorCookie = nil
 	close(cleanupDone)
 	if o.disconnectCleanupDone == cleanupDone {
 		o.disconnectCleanupDone = nil
