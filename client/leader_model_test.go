@@ -1,11 +1,13 @@
 package client
 
 import (
+	"encoding/json"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/cenkalti/backoff/v4"
+	"github.com/google/uuid"
 	"github.com/ovn-kubernetes/libovsdb/ovsdb"
 	"github.com/ovn-kubernetes/libovsdb/ovsdb/serverdb"
 	"github.com/stretchr/testify/require"
@@ -20,6 +22,21 @@ func setDatabaseModel(t *testing.T, cli Client, row *serverdb.Database, dbModel 
 	require.NoError(t, err)
 	_, err = ovsdb.CheckOperationResults(reply, ops)
 	require.NoError(t, err)
+}
+
+func newClientWithoutServerDBRow(t *testing.T) (Client, string) {
+	t.Helper()
+	var defSchema ovsdb.DatabaseSchema
+	require.NoError(t, json.Unmarshal([]byte(schema), &defSchema))
+	_, sock := newOVSDBServer(t, defDB, defSchema)
+	serverDBModel, err := serverdb.FullDatabaseModel()
+	require.NoError(t, err)
+	endpoint := "unix:" + sock
+	admin, err := newOVSDBClient(serverDBModel, WithEndpoint(endpoint))
+	require.NoError(t, err)
+	require.NoError(t, admin.Connect(t.Context()))
+	t.Cleanup(admin.Close)
+	return admin, endpoint
 }
 
 func TestLeaderMonitorFollowsDatabaseModel(t *testing.T) {
@@ -94,4 +111,36 @@ func TestLeaderOnlyRejectsSingleFollowerEndpoint(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(c.Close)
 	require.ErrorContains(t, c.Connect(t.Context()), "endpoint is not leader")
+}
+
+func TestLeaderMonitorHandlesClusteredRowCreatedAfterConnect(t *testing.T) {
+	admin, endpoint := newClientWithoutServerDBRow(t)
+	c, err := newOVSDBClient(defDB, WithEndpoint(endpoint), WithLeaderOnly(true))
+	require.NoError(t, err)
+	t.Cleanup(c.Close)
+	require.NoError(t, c.Connect(t.Context()))
+
+	require.Eventually(t, func() bool {
+		c.rpcMutex.RLock()
+		defer c.rpcMutex.RUnlock()
+		return c.leaderMonitorCookie != nil && c.endpoints[0].serverID == ""
+	}, time.Second, time.Millisecond)
+
+	sid := "created-after-connect"
+	row := &serverdb.Database{
+		UUID:      uuid.NewString(),
+		Name:      defDB.Name(),
+		Connected: true,
+		Leader:    false,
+		Model:     serverdb.DatabaseModelClustered,
+		Sid:       &sid,
+	}
+	ops, err := admin.Create(row)
+	require.NoError(t, err)
+	reply, err := admin.Transact(t.Context(), ops...)
+	require.NoError(t, err)
+	_, err = ovsdb.CheckOperationResults(reply, ops)
+	require.NoError(t, err)
+
+	require.Eventually(t, func() bool { return !c.Connected() }, 3*time.Second, time.Millisecond)
 }
